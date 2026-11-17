@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
-function localCoach(prompt:string, habits:any[], summary:any) {
+type CoachHabit = { name?: string; category?: string; streak?: number; target?: number; completedToday?: boolean };
+type CoachSummary = { total?: number; completed?: number; completionRate?: number };
+function localCoach(prompt:string, habits:CoachHabit[], summary:CoachSummary) {
  const total=Math.max(0,Number(summary.total)||habits.length);
  const completed=Math.max(0,Number(summary.completed)||habits.filter(h=>h.completedToday).length);
  const rate=Math.max(0,Math.min(100,Number(summary.completionRate)||0));
