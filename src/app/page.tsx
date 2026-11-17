@@ -55,15 +55,16 @@ export default function Home(){
    const err=habitsRes.error||checksRes.error||goalsRes.error||journalRes.error;
    if(err){setAuthMessage("Cloud sync needs the Supabase SQL migration. "+err.message);setCloudReady(false);return;}
    const remoteHabits=habitsRes.data||[];
-   if(remoteHabits.length){
-    const completions:Record<string,Record<string,boolean>>={};
-    for(const row of checksRes.data||[]){(completions[row.habit_id]??={})[row.completed_on]=true;}
-    setData(prev=>({...prev,
-     habits:remoteHabits.map(h=>({id:h.id,name:h.name,category:h.category,emoji:h.emoji,target:h.target_per_week,createdAt:String(h.created_at).slice(0,10),archived:!!h.archived_at,completions:completions[h.id]||{}})),
-     goals:(goalsRes.data||[]).map(g=>({id:g.id,title:g.title,target:g.target,current:g.current,due:g.due_on||todayKey()})),
-     journal:(journalRes.data||[]).map(j=>({date:j.entry_date,mood:j.mood,note:j.note}))
-    }));
-   }
+   const completions:Record<string,Record<string,boolean>>={};
+   for(const row of checksRes.data||[]){(completions[row.habit_id]??={})[row.completed_on]=true;}
+   // Cloud data is authoritative after sign-in, including an intentionally empty account.
+   // This prevents one browser user's local data leaking into another account.
+   setData(prev=>({
+    ...prev,
+    habits:remoteHabits.length?remoteHabits.map(h=>({id:h.id,name:h.name,category:h.category,emoji:h.emoji,target:h.target_per_week,createdAt:String(h.created_at).slice(0,10),archived:!!h.archived_at,completions:completions[h.id]||{}})):fresh().habits,
+    goals:(goalsRes.data||[]).map(g=>({id:g.id,title:g.title,target:g.target,current:g.current,due:g.due_on||todayKey()})),
+    journal:(journalRes.data||[]).map(j=>({date:j.entry_date,mood:j.mood,note:j.note}))
+   }));
    setCloudReady(true);setAuthMessage("Cloud sync connected for "+user.email+".");
   })();
   return ()=>{cancelled=true};
@@ -87,6 +88,8 @@ export default function Home(){
     const keepGoalIds=new Set(goals.map(g=>g.id));for(const row of remoteGoals||[])if(!keepGoalIds.has(row.id)){const {error}=await supabase.from("habit_goals").delete().eq("id",row.id).eq("user_id",user.id);if(error)throw error;}
     const journal=data.journal.map(j=>({user_id:user.id,entry_date:j.date,mood:j.mood,note:j.note}));
     if(journal.length){const {error}=await supabase.from("habit_journal").upsert(journal,{onConflict:"user_id,entry_date"});if(error)throw error;}
+    const {data:remoteJournal,error:journalReadError}=await supabase.from("habit_journal").select("entry_date").eq("user_id",user.id);if(journalReadError)throw journalReadError;
+    const keepJournalDates=new Set(journal.map(j=>j.entry_date));for(const row of remoteJournal||[])if(!keepJournalDates.has(row.entry_date)){const {error}=await supabase.from("habit_journal").delete().eq("entry_date",row.entry_date).eq("user_id",user.id);if(error)throw error;}
     setAuthMessage("All changes synced to your account.");
    }catch(e){setAuthMessage("Cloud sync issue: "+(e instanceof Error?e.message:"Please try again."));}
   },1200);
