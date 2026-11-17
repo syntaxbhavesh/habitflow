@@ -50,12 +50,13 @@ drop policy if exists "Users manage own habits" on public.habits;
 drop policy if exists "Users manage own checkins" on public.habit_checkins;
 drop policy if exists "Users manage own goals" on public.habit_goals;
 drop policy if exists "Users manage own journal" on public.habit_journal;
-create policy "Users manage own habits" on public.habits for all using(auth.uid()=user_id) with check(auth.uid()=user_id);
-create policy "Users manage own checkins" on public.habit_checkins for all using(auth.uid()=user_id) with check(auth.uid()=user_id);
-create policy "Users manage own goals" on public.habit_goals for all using(auth.uid()=user_id) with check(auth.uid()=user_id);
-create policy "Users manage own journal" on public.habit_journal for all using(auth.uid()=user_id) with check(auth.uid()=user_id);
+create policy "Users manage own habits" on public.habits for all using((select auth.uid())=user_id) with check((select auth.uid())=user_id);
+create policy "Users manage own checkins" on public.habit_checkins for all using((select auth.uid())=user_id) with check((select auth.uid())=user_id);
+create policy "Users manage own goals" on public.habit_goals for all using((select auth.uid())=user_id) with check((select auth.uid())=user_id);
+create policy "Users manage own journal" on public.habit_journal for all using((select auth.uid())=user_id) with check((select auth.uid())=user_id);
 
 create index if not exists habits_user_id_idx on public.habits(user_id);
 create index if not exists habit_checkins_user_date_idx on public.habit_checkins(user_id, completed_on desc);
+create index if not exists habit_checkins_habit_user_idx on public.habit_checkins(habit_id,user_id);
 create index if not exists habit_goals_user_id_idx on public.habit_goals(user_id);
 create index if not exists habit_journal_user_date_idx on public.habit_journal(user_id, entry_date desc);
