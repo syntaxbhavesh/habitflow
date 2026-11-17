@@ -32,12 +32,12 @@ export default function Home(){
  const [goalName,setGoalName]=useState(""),[goalTarget,setGoalTarget]=useState("30"),[journalNote,setJournalNote]=useState(""),[mood,setMood]=useState("🙂");
  const [prompt,setPrompt]=useState("I want to build a consistent study routine without feeling overwhelmed."),[suggestions,setSuggestions]=useState<Habit[]>([]),[coachQuestion,setCoachQuestion]=useState("Review my last 7 days and give me 3 practical, kind suggestions."),[coach,setCoach]=useState(""),[busy,setBusy]=useState(false),[notice,setNotice]=useState("");
  const today=todayKey(), active=data.habits.filter(h=>!h.archived), completed=active.filter(h=>h.completions[today]).length, percent=active.length?Math.round(completed/active.length*100):0;
- useEffect(()=>{try{const raw=localStorage.getItem(STORE_KEY);if(raw){const saved=JSON.parse(raw);setData({...fresh(),...saved});}else{const legacy=localStorage.getItem("habitflow-habits");if(legacy){const oldHabits=JSON.parse(legacy);if(Array.isArray(oldHabits))setData(p=>({...p,habits:oldHabits}));}}}catch{}setLoaded(true)},[]);
+ useEffect(()=>{try{const raw=localStorage.getItem(STORE_KEY);if(raw){const saved=JSON.parse(raw);const safeHabits=Array.isArray(saved.habits)?saved.habits.map((h:Habit)=>({...h,id:/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(h.id)?h.id:crypto.randomUUID()})):fresh().habits;setData({...fresh(),...saved,habits:safeHabits});}else{const legacy=localStorage.getItem("habitflow-habits");if(legacy){const oldHabits=JSON.parse(legacy);if(Array.isArray(oldHabits))setData(p=>({...p,habits:oldHabits}));}}}catch{}setLoaded(true)},[]);
  useEffect(()=>{if(loaded)localStorage.setItem(STORE_KEY,JSON.stringify(data))},[data,loaded]);
  useEffect(()=>{
   if(!supabase)return;
   supabase.auth.getSession().then(({data})=>setUser(data.session?.user??null));
-  const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{setUser(session?.user??null);setCloudReady(false)});
+  const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{const nextUser=session?.user??null;setUser(previous=>{if(previous?.id!==nextUser?.id)setCloudReady(false);return nextUser;})});
   return ()=>subscription.unsubscribe();
  },[supabase]);
  useEffect(()=>{
