@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { getSupabase } from "@/lib/supabase";
+import type { User } from "@supabase/supabase-js";
 import { Activity, ArrowDownToLine, ArrowUpRight, Bell, BookOpen, CalendarDays, Check, ChevronRight, CircleHelp, Flame, Heart, Lightbulb, ListChecks, Plus, Sparkles, Target, Trash2, TrendingUp, WandSparkles, X } from "lucide-react";
 
 type Habit = { id:string; name:string; category:string; emoji:string; target:number; createdAt:string; archived?:boolean; completions:Record<string,boolean> };
@@ -12,22 +14,85 @@ const shift=(date:string,n:number)=>{const d=new Date(date+"T12:00:00");d.setDat
 const pretty=(date:string)=>new Date(date+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"});
 const days=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const fresh=():Store=>({habits:[
-{id:"read",name:"Read 20 pages",category:"Learning",emoji:"📚",target:7,createdAt:todayKey(),completions:{}},
-{id:"move",name:"Move your body",category:"Wellness",emoji:"🌿",target:5,createdAt:todayKey(),completions:{}},
-{id:"water",name:"Drink enough water",category:"Health",emoji:"💧",target:7,createdAt:todayKey(),completions:{}},
-{id:"focus",name:"Focused study",category:"Focus",emoji:"🎯",target:5,createdAt:todayKey(),completions:{}}
+{id:"10000000-0000-4000-8000-000000000001",name:"Read 20 pages",category:"Learning",emoji:"📚",target:7,createdAt:todayKey(),completions:{}},
+{id:"10000000-0000-4000-8000-000000000002",name:"Move your body",category:"Wellness",emoji:"🌿",target:5,createdAt:todayKey(),completions:{}},
+{id:"10000000-0000-4000-8000-000000000003",name:"Drink enough water",category:"Health",emoji:"💧",target:7,createdAt:todayKey(),completions:{}},
+{id:"10000000-0000-4000-8000-000000000004",name:"Focused study",category:"Focus",emoji:"🎯",target:5,createdAt:todayKey(),completions:{}}
 ],goals:[],journal:[],reminder:"20:00",reminderEnabled:false,displayName:""});
 const streak=(h:Habit)=>{let n=0,d=todayKey();if(!h.completions[d])d=shift(d,-1);while(h.completions[d]){n++;d=shift(d,-1)}return n};
 const IconButton=({children,onClick,label}:{children:React.ReactNode;onClick:()=>void;label:string})=><button title={label} aria-label={label} onClick={onClick} className="rounded-xl p-2 text-[#849087] hover:bg-[#f1f5f0] hover:text-[#3f7957]">{children}</button>;
 
 export default function Home(){
  const [data,setData]=useState<Store>(fresh),[loaded,setLoaded]=useState(false),[tab,setTab]=useState("Overview");
+ const supabase=getSupabase();
+ const [user,setUser]=useState<User|null>(null),[cloudReady,setCloudReady]=useState(false);
+ const [authEmail,setAuthEmail]=useState(""),[authPassword,setAuthPassword]=useState(""),[authMode,setAuthMode]=useState<"signin"|"signup">("signin"),[authBusy,setAuthBusy]=useState(false),[authMessage,setAuthMessage]=useState("");
+
  const [habitName,setHabitName]=useState(""),[category,setCategory]=useState("Personal"),[emoji,setEmoji]=useState("✨"),[target,setTarget]=useState(7);
  const [goalName,setGoalName]=useState(""),[goalTarget,setGoalTarget]=useState("30"),[journalNote,setJournalNote]=useState(""),[mood,setMood]=useState("🙂");
  const [prompt,setPrompt]=useState("I want to build a consistent study routine without feeling overwhelmed."),[suggestions,setSuggestions]=useState<Habit[]>([]),[coachQuestion,setCoachQuestion]=useState("Review my last 7 days and give me 3 practical, kind suggestions."),[coach,setCoach]=useState(""),[busy,setBusy]=useState(false),[notice,setNotice]=useState("");
  const today=todayKey(), active=data.habits.filter(h=>!h.archived), completed=active.filter(h=>h.completions[today]).length, percent=active.length?Math.round(completed/active.length*100):0;
  useEffect(()=>{try{const raw=localStorage.getItem(STORE_KEY);if(raw){const saved=JSON.parse(raw);setData({...fresh(),...saved});}else{const legacy=localStorage.getItem("habitflow-habits");if(legacy){const oldHabits=JSON.parse(legacy);if(Array.isArray(oldHabits))setData(p=>({...p,habits:oldHabits}));}}}catch{}setLoaded(true)},[]);
  useEffect(()=>{if(loaded)localStorage.setItem(STORE_KEY,JSON.stringify(data))},[data,loaded]);
+ useEffect(()=>{
+  if(!supabase)return;
+  supabase.auth.getSession().then(({data})=>setUser(data.session?.user??null));
+  const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{setUser(session?.user??null);setCloudReady(false)});
+  return ()=>subscription.unsubscribe();
+ },[supabase]);
+ useEffect(()=>{
+  if(!supabase||!user||!loaded)return;
+  let cancelled=false;
+  (async()=>{
+   setCloudReady(false);setAuthMessage("Loading your cloud data…");
+   const [habitsRes,checksRes,goalsRes,journalRes]=await Promise.all([
+    supabase.from("habits").select("*").eq("user_id",user.id),
+    supabase.from("habit_checkins").select("*").eq("user_id",user.id),
+    supabase.from("habit_goals").select("*").eq("user_id",user.id),
+    supabase.from("habit_journal").select("*").eq("user_id",user.id)
+   ]);
+   if(cancelled)return;
+   const err=habitsRes.error||checksRes.error||goalsRes.error||journalRes.error;
+   if(err){setAuthMessage("Cloud sync needs the Supabase SQL migration. "+err.message);setCloudReady(false);return;}
+   const remoteHabits=habitsRes.data||[];
+   if(remoteHabits.length){
+    const completions:Record<string,Record<string,boolean>>={};
+    for(const row of checksRes.data||[]){(completions[row.habit_id]??={})[row.completed_on]=true;}
+    setData(prev=>({...prev,
+     habits:remoteHabits.map(h=>({id:h.id,name:h.name,category:h.category,emoji:h.emoji,target:h.target_per_week,createdAt:String(h.created_at).slice(0,10),archived:!!h.archived_at,completions:completions[h.id]||{}})),
+     goals:(goalsRes.data||[]).map(g=>({id:g.id,title:g.title,target:g.target,current:g.current,due:g.due_on||todayKey()})),
+     journal:(journalRes.data||[]).map(j=>({date:j.entry_date,mood:j.mood,note:j.note}))
+    }));
+   }
+   setCloudReady(true);setAuthMessage("Cloud sync connected for "+user.email+".");
+  })();
+  return ()=>{cancelled=true};
+ },[supabase,user?.id,loaded]);
+ useEffect(()=>{
+  if(!supabase||!user||!cloudReady)return;
+  const timer=window.setTimeout(async()=>{
+   try{
+    const habits=data.habits.map(h=>({id:h.id,user_id:user.id,name:h.name,category:h.category,emoji:h.emoji,target_per_week:h.target,archived_at:h.archived?new Date().toISOString():null}));
+    if(habits.length){const {error}=await supabase.from("habits").upsert(habits);if(error)throw error;}
+    const {data:remoteHabitIds,error:habitReadError}=await supabase.from("habits").select("id").eq("user_id",user.id);
+    if(habitReadError)throw habitReadError;
+    const keepHabitIds=new Set(habits.map(h=>h.id));
+    for(const row of remoteHabitIds||[])if(!keepHabitIds.has(row.id)){const {error}=await supabase.from("habits").delete().eq("id",row.id).eq("user_id",user.id);if(error)throw error;}
+    const checkins=data.habits.flatMap(h=>Object.entries(h.completions).filter(([,done])=>done).map(([date])=>({habit_id:h.id,user_id:user.id,completed_on:date})));
+    const {error:clearChecksError}=await supabase.from("habit_checkins").delete().eq("user_id",user.id);if(clearChecksError)throw clearChecksError;
+    if(checkins.length){const {error}=await supabase.from("habit_checkins").upsert(checkins,{onConflict:"habit_id,completed_on"});if(error)throw error;}
+    const goals=data.goals.map(g=>({id:g.id,user_id:user.id,title:g.title,target:g.target,current:g.current,due_on:g.due||null}));
+    if(goals.length){const {error}=await supabase.from("habit_goals").upsert(goals);if(error)throw error;}
+    const {data:remoteGoals,error:goalReadError}=await supabase.from("habit_goals").select("id").eq("user_id",user.id);if(goalReadError)throw goalReadError;
+    const keepGoalIds=new Set(goals.map(g=>g.id));for(const row of remoteGoals||[])if(!keepGoalIds.has(row.id)){const {error}=await supabase.from("habit_goals").delete().eq("id",row.id).eq("user_id",user.id);if(error)throw error;}
+    const journal=data.journal.map(j=>({user_id:user.id,entry_date:j.date,mood:j.mood,note:j.note}));
+    if(journal.length){const {error}=await supabase.from("habit_journal").upsert(journal,{onConflict:"user_id,entry_date"});if(error)throw error;}
+    setAuthMessage("All changes synced to your account.");
+   }catch(e){setAuthMessage("Cloud sync issue: "+(e instanceof Error?e.message:"Please try again."));}
+  },1200);
+  return ()=>window.clearTimeout(timer);
+ },[data,supabase,user?.id,cloudReady]);
+
  useEffect(()=>{if(!data.reminderEnabled||!loaded)return;const check=()=>{const now=new Date();const hm=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");const stamp=today+"-"+hm;if(hm===data.reminder&&localStorage.getItem("habitflow-reminder-fired")!==stamp){localStorage.setItem("habitflow-reminder-fired",stamp);setNotice("A gentle reminder: take a moment to check in with your habits.");if("Notification" in window&&Notification.permission==="granted")new Notification("HabitFlow check-in",{body:"A small step today still counts."});}};check();const id=window.setInterval(check,30000);return()=>window.clearInterval(id)},[data.reminder,data.reminderEnabled,loaded,today]);
  const week=useMemo(()=>Array.from({length:7},(_,i)=>{const date=shift(today,i-6);return {date,day:days[new Date(date+"T12:00:00").getDay()],count:active.filter(h=>h.completions[date]).length}}),[data.habits,today]);
  const weeklyTotal=week.reduce((a,b)=>a+b.count,0), maxWeek=Math.max(1,...week.map(d=>d.count));
@@ -44,6 +109,17 @@ export default function Home(){
  const nav=[{name:"Overview",icon:<Activity size={17}/>},{name:"My habits",icon:<ListChecks size={17}/>},{name:"AI Studio",icon:<Sparkles size={17}/>},{name:"Insights",icon:<TrendingUp size={17}/>},{name:"Goals & journal",icon:<BookOpen size={17}/>},{name:"Settings",icon:<Bell size={17}/>}];
  return <main className="min-h-screen"><div className="mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-7">
  <header className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-2xl bg-[#e6f0e8] text-[#397653]"><Activity size={23}/></div><div><div className="text-xl font-bold tracking-tight">HabitFlow <span className="text-[#4b8b65]">AI</span></div><div className="text-xs text-[#849087]">Small steps. Meaningful change.</div></div></div><div className="flex items-center gap-2"><span className="hidden text-sm text-[#78847b] sm:block">Your personal space</span><button onClick={exportData} className="flex items-center gap-2 rounded-xl border border-[#e4eae4] bg-white px-3 py-2 text-sm font-medium"><ArrowDownToLine size={16}/> Backup</button></div></header>
+ <section className="mt-5 panel p-4 md:p-5">
+ <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="font-semibold">Your account & cloud sync</div><p className="mt-1 text-xs text-[#849087]">{!supabase?"Add Supabase environment variables in Vercel to enable accounts and sync.":user?(authMessage||"Signed in. Syncing your workspace…"):"Sign in to sync your habits across devices."}</p></div>
+ {supabase&&user&&<button onClick={async()=>{await supabase.auth.signOut();setUser(null);setCloudReady(false);setAuthMessage("Signed out. Your local browser data remains available.");}} className="rounded-xl border border-[#e4eae4] px-3 py-2 text-sm font-semibold">Sign out</button>}</div>
+ {supabase&&!user&&<form onSubmit={async e=>{e.preventDefault();setAuthBusy(true);setAuthMessage("");const result=authMode==="signin"?await supabase.auth.signInWithPassword({email:authEmail,password:authPassword}):await supabase.auth.signUp({email:authEmail,password:authPassword});setAuthBusy(false);if(result.error)setAuthMessage(result.error.message);else if(authMode==="signup"&&!result.data.session)setAuthMessage("Check your email to confirm your account, then sign in.");else setAuthMessage("Authentication successful. Loading your cloud workspace…");}} className="mt-4 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+ <input type="email" required value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="Email address" autoComplete="email" className="rounded-xl border border-[#e4eae4] px-3 py-2.5 text-sm"/>
+ <input type="password" required minLength={8} value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="Password (8+ characters)" autoComplete={authMode==="signin"?"current-password":"new-password"} className="rounded-xl border border-[#e4eae4] px-3 py-2.5 text-sm"/>
+ <button disabled={authBusy} className="rounded-xl bg-[#3f7957] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{authBusy?"Please wait…":authMode==="signin"?"Sign in":"Create account"}</button>
+ </form>}
+ {supabase&&!user&&<button onClick={()=>setAuthMode(m=>m==="signin"?"signup":"signin")} className="mt-3 text-xs font-semibold text-[#4b805d]">{authMode==="signin"?"New to HabitFlow? Create an account":"Already registered? Sign in"}</button>}
+ {supabase&&authMessage&&<p className="mt-2 text-xs text-[#66806c]">{authMessage}</p>}
+ </section>
  <nav className="mt-7 flex gap-1 overflow-x-auto rounded-2xl border border-[#e8ede8] bg-white p-1">{nav.map(n=><button key={n.name} onClick={()=>setTab(n.name)} className={"flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium "+(tab===n.name?"bg-[#eaf2eb] text-[#3f7957]":"text-[#78847b] hover:bg-[#f7f9f6]")}>{n.icon}<span>{n.name}</span></button>)}</nav>
  {notice&&<div className="mt-4 flex items-center justify-between rounded-xl border border-[#dce9de] bg-[#eff6ef] px-4 py-3 text-sm text-[#426d50]">{notice}<button onClick={()=>setNotice("")}><X size={16}/></button></div>}
  {tab==="Overview"&&<><section className="mt-8 grid gap-6 lg:grid-cols-[1.4fr_.8fr]"><div><p className="text-sm font-semibold text-[#548266]">YOUR DAILY RESET · {pretty(today)}</p><h1 className="mt-2 text-3xl font-bold tracking-tight md:text-4xl">Make today <span className="text-[#548266]">count.</span></h1><p className="mt-2 text-[#78847b]">Consistency is built one little promise at a time.</p></div><div className="panel flex items-center gap-4 p-5"><div className="relative grid h-20 w-20 shrink-0 place-items-center rounded-full" style={{background:"conic-gradient(#4b8b65 "+percent+"%,#edf1ed 0)"}}><div className="grid h-[62px] w-[62px] place-items-center rounded-full bg-white text-lg font-bold">{percent}%</div></div><div><div className="font-semibold">Today's progress</div><p className="mt-1 text-sm text-[#78847b]">{completed} of {active.length} habits complete</p><p className="mt-2 text-xs text-[#4b8b65]">{percent===100&&active.length?"Lovely — all done!":"Every small check-in counts"}</p></div></div></section>
