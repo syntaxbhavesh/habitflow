@@ -10,15 +10,17 @@ create table if not exists public.habits (
  target_per_week smallint not null default 7 check (target_per_week between 1 and 7),
  archived_at timestamptz,
  created_at timestamptz not null default now(),
- updated_at timestamptz not null default now()
+ updated_at timestamptz not null default now(),
+ unique(id,user_id)
 );
 create table if not exists public.habit_checkins (
  id uuid primary key default gen_random_uuid(),
- habit_id uuid not null references public.habits(id) on delete cascade,
+ habit_id uuid not null,
  user_id uuid not null references auth.users(id) on delete cascade,
  completed_on date not null,
  created_at timestamptz not null default now(),
- unique(habit_id, completed_on)
+ unique(habit_id, completed_on),
+ foreign key (habit_id,user_id) references public.habits(id,user_id) on delete cascade
 );
 create table if not exists public.habit_goals (
  id uuid primary key default gen_random_uuid(),
