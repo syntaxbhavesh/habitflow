@@ -1,13 +1,12 @@
 # HabitFlow AI
 
-A calm, AI-assisted habit tracker built with Next.js. Track daily habits, review consistency, and ask an AI coach to turn progress into practical next steps.
+A calm, responsive habit tracker with AI habit ideas, an AI progress coach, goals, journaling, insights, reminders and data export.
 
 ## Stack
-- Next.js App Router + TypeScript
-- Tailwind CSS
-- Browser local storage for a zero-setup demo
-- Optional AI coach endpoint (OpenAI-compatible or Gemini)
-- Optional Supabase SQL schema for future account sync
+- Next.js App Router + TypeScript + Tailwind CSS
+- Local-first browser storage (works without external services)
+- Optional Supabase Auth + Postgres cloud sync with row-level security
+- Server-side OpenAI or Gemini integrations
 
 ## Run locally
 ```bash
@@ -17,16 +16,28 @@ npm run dev
 ```
 Open http://localhost:3000.
 
-## AI setup
-Set `AI_PROVIDER` to `openai` or `gemini` and provide the matching server-side API key. Never put provider secrets in a `NEXT_PUBLIC_*` variable. The app remains usable without an AI key; the coach then shows a setup message.
+## Enable AI
+Set `AI_PROVIDER=openai` and `OPENAI_API_KEY`, or `AI_PROVIDER=gemini` and `GEMINI_API_KEY`. These are server-only environment variables. Do not expose provider keys using a `NEXT_PUBLIC_` prefix.
 
-## Deploy
-Import this repository into Vercel. Use the default Next.js settings. Add AI environment variables in Vercel if you want the coach enabled.
+## Enable accounts and cloud sync
+1. Create a Supabase project.
+2. In its SQL Editor, run `supabase/migrations/0001_initial_schema.sql`.
+3. In Supabase Auth settings, enable Email provider and configure the allowed site/redirect URLs for your local and production domains.
+4. Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from Supabase Project Settings → API to your local `.env.local` and Vercel project environment variables.
+5. Redeploy. The app then shows email/password sign-in and syncs habits, check-ins, goals and journal entries to the signed-in user's RLS-protected rows.
 
-## Data & privacy
-The starter stores habits and check-ins in the current browser's local storage. Clearing browser data removes this local demo data. The optional SQL migration is a starting point for Supabase; authentication and cloud sync must be wired before treating it as a multi-device account system.
+Without those two Supabase values, the app remains in local-only mode. Existing local browser data is retained. Cloud sync is enabled only after a user signs in.
+
+## Deploy to Vercel
+Import `syntaxbhavesh/habitflow` with the default Next.js settings. Add the environment variables above in Project Settings → Environment Variables, then redeploy.
+
+## Privacy
+- AI provider secrets are read only by server routes.
+- Supabase's public anon key is intended for browser use; database access is protected by RLS policies scoped to `auth.uid()`.
+- Local data stays in the browser until cloud sync is configured and a user signs in.
+- Export a JSON backup from Settings before clearing browser data.
 
 ## Scripts
-- `npm run dev` — development server
+- `npm run dev` — local development
 - `npm run build` — production build
 - `npm run lint` — ESLint
